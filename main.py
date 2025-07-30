@@ -7,7 +7,7 @@ from tradingview_ta import TA_Handler, Interval
 import requests
 
 # ===== CONFIGURATION =====
-THRESHOLD_PERCENT = 3.0  #for checking 
+THRESHOLD_PERCENT = 1.0
 DELAY_BETWEEN_STOCKS = 20
 BATCH_SIZE = 5
 BATCH_COOLDOWN = 90
