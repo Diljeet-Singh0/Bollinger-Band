@@ -1,0 +1,31 @@
+name: Bollinger Bands Scanner
+on:
+  schedule:
+    # Runs at 9:20 AM IST (3:50 AM UTC)
+    - cron: '50 3 * * *'
+    # Runs at 2:55 PM IST (9:25 AM UTC)
+    - cron: '25 9 * * *'
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install tradingview-ta requests python-dotenv
+
+      - name: Run Bollinger Bands Scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python main.py
