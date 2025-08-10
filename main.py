@@ -1,141 +1,202 @@
+import yfinance as yf
+import datetime
+import pytz
 import time
-import random
-import logging
-import os
-from datetime import datetime
-from tradingview_ta import TA_Handler, Interval
 import requests
 
-# ===== CONFIGURATION =====
-THRESHOLD_PERCENT = 1.0
-DELAY_BETWEEN_STOCKS = 20
-BATCH_SIZE = 5
-BATCH_COOLDOWN = 90
-MAX_RETRIES = 2
-
-# ===== TELEGRAM CONFIGURATION =====
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # Set in GitHub Secrets
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')     # Set in GitHub Secrets
-
-def send_telegram_signal(symbol, price, lower_band, threshold_percent):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        message = (
-            f"🚨 <b>Bollinger Bands (20,2) Signal</b> 🚨\n\n"
-            f"<b>{symbol}</b>\n"
-            f"Price: ₹{price:.2f}\n"
-            f"Lower Band: ₹{lower_band:.2f}\n"
-            f"Within {threshold_percent}% of lower band\n"
-            f"Diff: {(price - lower_band)/lower_band*100:.2f}%"
-        )
-        params = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': 'HTML'
-        }
-        requests.post(url, params=params)
-    except Exception as e:
-        print(f"⚠️ Failed to send Telegram signal: {str(e)}")
-
-
-# ===== STOCK DATA =====
-STOCK_DICT = {
-    "HDFCBANK": ("NSE", "Banking"),
-    "INFY": ("NSE", "IT"),
-    "TCS": ("NSE", "IT"),
-    "ONGC": ("NSE", "Oil & Gas"),
-    "GOLDBEES": ("NSE", "ETF"),
-    "ANGELONE": ("NSE", "Brokerage"),
-    "SUNPHARMA": ("BSE", "Pharma"),
-    "TECHM": ("NSE", "IT"),
-    "HINDUNILVR": ("BSE", "FMCG"),
-    "BSE": ("NSE", "Exchange"),
-    "SILVERBEES": ("NSE", "ETF"),
-    "BAJAJ_AUTO": ("NSE", "Auto"),
-    "WIPRO": ("BSE", "IT"),
-    "BHARTIARTL": ("BSE", "Telecom"),
-    "TATAMOTORS": ("NSE", "Auto"),
-    "APOLLOTYRE": ("NSE", "Auto"),
-    "JSWSTEEL": ("NSE", "Steel"),
-    "HINDCOPPER": ("BSE", "Metals"),
-    "HAL": ("NSE", "Defense"),
-    "TATAPOWER": ("NSE", "Power"),
-    "LT": ("NSE", "Infra"),
-    "LTF": ("NSE", "Finance"),
-    "MAZDOCK": ("NSE", "Shipbuilding"),
-    "COCHINSHIP": ("BSE", "Shipping"),
-    "MOTHERSON": ("BSE", "Auto Parts"),
-    "BAJAJFINSV": ("NSE", "Financial"),
-    "CAMS": ("BSE", "FinTech"),
-    "TRENT": ("BSE", "Retail"),
-    "GPPL": ("NSE", "Port"),
-    "NCC": ("BSE", "Construction"),
-    "RECLTD": ("BSE", "Power Finance"),
-    "CDSL": ("NSE", "FinTech"),
-    "MCX": ("NSE", "Commodities")
+# ======================================
+# 📜 Stock List
+STOCKS = {
+    "HDFCBANK.NS": "12345",
+    "INFY.NS": "12345",
+    "TCS.NS": "12345",
+    "ONGC.NS": "12345",
+    "GOLDBEES.NS": "12345",
+    "ANGELONE.NS": "12345",
+    "SUNPHARMA.BO": "12345",
+    "TECHM.NS": "12345",
+    "HINDUNILVR.BO": "12345",
+    "BSE.NS": "12345",
+    "SILVERBEES.NS": "12345",
+    "BAJAJ-AUTO.NS": "12345",
+    "WIPRO.BO": "12345",
+    "BHARTIARTL.BO": "12345",
+    "TATAMOTORS.NS": "12345",
+    "APOLLOTYRE.NS": "12345",
+    "JSWSTEEL.NS": "12345",
+    "HINDCOPPER.BO": "12345",
+    "HAL.NS": "12345",
+    "TATAPOWER.NS": "12345",
+    "LT.NS": "12345",
+    "LTF.NS": "12345",
+    "MAZDOCK.NS": "12345",
+    "COCHINSHIP.BO": "12345",
+    "MOTHERSON.BO": "12345",
+    "BAJAJFINSV.NS": "12345",
+    "CAMS.BO": "12345",
+    "TRENT.BO": "12345",
+    "GPPL.NS": "12345",
+    "NCC.BO": "12345",
+    "RECLTD.BO": "12345",
+    "CDSL.NS": "12345",
+    "MCX.NS": "12345"
 }
 
-def fetch_stock_data(symbol, exchange):
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            handler = TA_Handler(
-                symbol=symbol,
-                exchange=exchange,
-                screener="india",
-                interval=Interval.INTERVAL_1_WEEK, 
-                timeout=20
-            )
-            analysis = handler.get_analysis()
-            return (
-                analysis.indicators["close"],
-                analysis.indicators["BB.lower"],  # Lower Bollinger Band (20,2)
-                analysis.indicators["BB.upper"]  
-            )
-        except Exception as e:
-            wait = (DELAY_BETWEEN_STOCKS * 2) + random.uniform(10, 20)
-            print(f"⚠️ Retry {attempt} for {symbol} in {wait:.1f}s...")
-            time.sleep(wait)
-    return None, None, None
+# ======================================
+# 📊 Notification tracking per stock
+stock_notify_tracker = {
+    symbol: {"count": 0, "last_sent": None} for symbol in STOCKS.keys()
+}
 
-def is_market_hours():
-    return True  # For testing only
+# 🕒 Market Hours (IST)
+MARKET_OPEN = datetime.time(9, 15)
+MARKET_CLOSE = datetime.time(15, 30)
+TIMEZONE = pytz.timezone('Asia/Kolkata')
 
-def run_scanner():
-    if not is_market_hours():
-        print("❌ Outside market hours - exiting")
-        return
-
-    print(f"\n🌀 Starting Bollinger Bands scan ({len(STOCK_DICT)} stocks)")
-    start_time = time.time()
-
+# 📥 Fetch 15-min Candle
+def fetch_candles(symbol):
     try:
-        for i, (symbol, (exchange, sector)) in enumerate(STOCK_DICT.items(), 1):
-            if i % BATCH_SIZE == 0:
-                print(f"🛑 Cooling down for {BATCH_COOLDOWN}s...")
-                time.sleep(BATCH_COOLDOWN)
+        data = yf.download(
+            tickers=symbol,
+            interval="15m",
+            period="15d",
+            progress=False,
+            auto_adjust=False,
+        )
+        data.reset_index(inplace=True)
+        data.rename(columns={'Datetime': 'time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+        return data
+    except Exception as e:
+        print(f"❌ Error fetching data for {symbol}:", e)
+        return None
 
-            price, lower_band, _ = fetch_stock_data(symbol, exchange)
+# 📈 Apply EMA
+def apply_emas(df):
+    if df is None or df.empty or len(df) < 200:
+        return None
+    df['EMA_13'] = df['close'].ewm(span=13).mean()
+    df['EMA_50'] = df['close'].ewm(span=50).mean()
+    df['EMA_200'] = df['close'].ewm(span=200).mean()
+    return df
 
-            if price is None or lower_band is None:
-                print(f"❌ Failed: {symbol}.{exchange}")
+# 📲 Telegram Configuration
+TELEGRAM_TOKEN = "7888730208:AAH8raBpIc_uiTUGYrPtlVJ0bu2EMclBtMc"
+TELEGRAM_CHAT_ID = "6157562865"
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        }
+        response = requests.post(url, data=payload)
+        if response.status_code != 200:
+            print(f"❌ Telegram Error: {response.text}")
+    except Exception as e:
+        print("❌ Telegram Exception:", e)
+
+# 🔍 Check EMA Signal
+def check_signal(df, symbol, tracker):
+    latest = df.iloc[-1]
+
+    ema_13 = latest['EMA_13'].item() if hasattr(latest['EMA_13'], 'item') else float(latest['EMA_13'])
+    ema_50 = latest['EMA_50'].item() if hasattr(latest['EMA_50'], 'item') else float(latest['EMA_50'])
+    ema_200 = latest['EMA_200'].item() if hasattr(latest['EMA_200'], 'item') else float(latest['EMA_200'])
+    close = latest['close'].item() if hasattr(latest['close'], 'item') else float(latest['close'])
+    open_ = latest['open'].item() if hasattr(latest['open'], 'item') else float(latest['open'])
+
+    ema_diff = abs(ema_13 - ema_50)
+    threshold = 5
+
+    bullish = (
+        ema_diff < threshold and
+        ema_200 > ema_50 and
+        ema_200 > ema_13 and
+        close > ema_50 and
+        close > open_
+    )
+
+    bearish = (
+        ema_diff < threshold and
+        ema_200 < ema_50 and
+        ema_200 < ema_13 and
+        close < ema_50 and
+        close < open_
+    )
+
+    now = datetime.datetime.now(TIMEZONE)
+    track = tracker[symbol]
+
+    allow_notify = (
+        track["last_sent"] is None or
+        (now - track["last_sent"]).total_seconds() >= 7200
+    )
+
+    if bullish:
+        signal = "Bullish ✅"
+        print(f"🔔 {symbol} => {signal}")
+        if allow_notify:
+            send_telegram(f"📈 {symbol} => {signal}")
+            track["count"] += 1
+            track["last_sent"] = now
+        return signal, close, ema_13, ema_50, ema_200
+
+    elif bearish:
+        signal = "Bearish ❌"
+        print(f"🔔 {symbol} => {signal}")
+        if allow_notify:
+            send_telegram(f"📉 {symbol} => {signal}")
+            track["count"] += 1
+            track["last_sent"] = now
+        return signal, close, ema_13, ema_50, ema_200
+
+    else:
+        print(f"➖ {symbol} => No Signal")
+        return "No Signal ➖", close, ema_13, ema_50, ema_200
+
+# 🕒 Check if Market Open
+def is_market_open():
+    now = datetime.datetime.now(TIMEZONE)
+    if now.weekday() >= 5:
+        return False
+    return MARKET_OPEN <= now.time() <= MARKET_CLOSE
+
+# 🔁 Main Loop
+print("🚀 EMA Trading Bot Started")
+while True:
+    now = datetime.datetime.now(TIMEZONE).time()
+    if now > MARKET_CLOSE:
+        print("Market closed. Exiting loop.")
+        break
+    try:
+        if not is_market_open():
+            print("💤 Market closed. Waiting...")
+            time.sleep(300)
+            continue
+
+        for symbol in STOCKS.keys():
+            print(f"\n🔄 Checking {symbol}...")
+            df = fetch_candles(symbol)
+            if df is None or len(df) < 200:
+                print(f"⚠️ Not enough data for {symbol}")
                 continue
 
-            threshold = THRESHOLD_PERCENT / 100
-            if lower_band <= price <= lower_band * (1 + threshold):
-                print(f"🚨 {symbol}: ₹{price:.2f} | Lower Band: ₹{lower_band:.2f} | WITHIN RANGE")
-                send_telegram_signal(symbol, price, lower_band, THRESHOLD_PERCENT)
-            else:
-                print(f"✅ {symbol}: ₹{price:.2f} | Lower Band: ₹{lower_band:.2f} | Diff: {(price-lower_band)/lower_band*100:.2f}%")
+            df = apply_emas(df)
+            if df is None:
+                continue
 
-            time.sleep(DELAY_BETWEEN_STOCKS + random.uniform(0, 15))
+            signal, close, ema_13, ema_50, ema_200 = check_signal(df, symbol, stock_notify_tracker)
+            now_time = datetime.datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M")
 
+            print(f"🔔 {symbol} => {signal}")
+
+        print("⏳ Waiting 1 minute...")
+        time.sleep(60)
+
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user")
+        break
     except Exception as e:
-        print(f"💥 Critical error: {str(e)}")
-        raise
-
-    print(f"\n⏱️ Scan completed in {(time.time()-start_time)/60:.1f} minutes")
-
-if __name__ == "__main__":
-    print("=== BOLLINGER BANDS (20,2) SCANNER ===")
-    print(f"Config: {DELAY_BETWEEN_STOCKS}-35s per stock | {BATCH_COOLDOWN}s every {BATCH_SIZE} stocks")
-    run_scanner()
+        print(f"❌ Error: {e}")
+        time.sleep(60)
